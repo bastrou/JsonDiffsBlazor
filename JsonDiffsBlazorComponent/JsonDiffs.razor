@@ -1,0 +1,217 @@
+﻿@namespace JsonDiffsBlazorComponent
+@using Newtonsoft.Json
+@using Newtonsoft.Json.Linq
+@using System.Text
+
+
+<div class="container">
+    @if (differencesList.Count() != 0)
+    {
+        @foreach (var dif in differencesList)
+        {
+            @((MarkupString)dif) <br />
+        }
+    }
+
+    @if (!string.IsNullOrEmpty(highlightedJson1) || !string.IsNullOrEmpty(highlightedJson2))
+    {
+        <div class="output-section">
+            <div class="json-display">
+                <div class="json-pane">
+                    <h5>Αρχικό JSON</h5>
+                    <pre>@((MarkupString)highlightedJson1)</pre>
+                </div>
+                <div class="json-pane">
+                    <h5>Επόμενο JSON</h5>
+                    <pre>@((MarkupString)highlightedJson2)</pre>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+
+@code {
+    [Parameter]
+    public string FirstJson { get; set; } = "{\"companyName\":\"TechInnovatorsInc.\",\"founded\":2010,\"isActive\":true,\"employees\":[{\"name\":\"JohnDoe\",\"age\":30,\"skills\":[\"JavaScript\",\"Python\",\"HTML\"]},{\"name\":\"JaneSmith\",\"age\":25,\"skills\":[\"Java\",\"SQL\",\"CSS\"]}],\"projects\":[{\"title\":\"MobileAppDevelopment\",\"budget\":15000,\"deadline\":\"2026-03-15\"}],\"headquarters\":{\"city\":\"NewYork\",\"country\":\"USA\",\"contact\":{\"email\":\"info@techinnovators.com\",\"phone\":\"+1-555-1234\"}}}";
+    [Parameter]
+    public string SecondJson { get; set; } =  "{\"companyName\":\"TechInnovatorsInc.\",\"founded\":2010,\"isActive\":true,\"employees\":[{\"name\":\"JohnDoe\",\"age\":30,\"skills\":[\"C#\",\"Python\",\"HTML\"]},{\"name\":\"\",\"age\":25,\"skills\":[\"Java\",\"SQL\",\"CSS\"]}],\"projects\":[{\"title\":\"WebsiteRedesign\",\"budget\":5000,\"deadline\":\"2025-12-01\"},{\"title\":\"MobileAppDevelopment\",\"budget\":15000,\"deadline\":\"2026-03-13\"}],\"headquarters\":{\"city\":\"Athens\",\"country\":\"Greece\",\"contact\":{\"email\":\"info@techinnovators.com\",\"phone\":\"+1-555-1234\"}}}";
+    private string highlightedJson1 { get; set; } = string.Empty;
+    private string highlightedJson2 { get; set; } = string.Empty;
+    private List<string> differencesList = new List<string>();
+
+    protected override void OnInitialized()
+    {
+        CompareJson();
+    }
+
+    private void CompareJson()
+    {
+        try
+        {
+            highlightedJson1 = string.Empty;
+            highlightedJson2 = string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(FirstJson) && !string.IsNullOrWhiteSpace(SecondJson))
+            {
+                JToken token1 = JToken.Parse(FirstJson);
+                JToken token2 = JToken.Parse(SecondJson);
+
+                var differences = FindDifferences(token1, token2);
+                if (differences.Count() == 0)
+                {
+                    differencesList.Add("No differences found. The two texts are identical.");
+                }
+
+                highlightedJson1 = HighlightJson(token1, differences, isFirstJson: true);
+                highlightedJson2 = HighlightJson(token2, differences, isFirstJson: false);
+            }
+            else
+            {
+                differencesList.Add("There is no text in one of the two parts to compare.");
+                highlightedJson1 = JsonConvert.SerializeObject(JsonConvert.DeserializeObject(FirstJson), Formatting.Indented);
+                highlightedJson2 = JsonConvert.SerializeObject(JsonConvert.DeserializeObject(SecondJson), Formatting.Indented);
+            }
+        }
+        catch (Exception ex)
+        {
+            differencesList.Add($"Error: {ex.Message}");
+        }
+    }
+
+    private List<(string Path, string Value1, string Value2)> FindDifferences(JToken token1, JToken token2, string path = "")
+    {
+        var differences = new List<(string Path, string Value1, string Value2)>();
+
+        if (JToken.DeepEquals(token1, token2))
+            return differences;
+
+        if (token1.Type != token2.Type)
+        {
+            differences.Add((path, token1.ToString(), token2.ToString()));
+            differencesList.Add($"There is an inconsistency in the element {path}: {token1.Type} vs {token2.Type}");
+            return differences;
+        }
+
+        switch (token1.Type)
+        {
+            case JTokenType.Object:
+                var obj1 = (JObject)token1;
+                var obj2 = (JObject)token2;
+
+                var allKeys = obj1.Properties().Select(p => p.Name)
+                    .Union(obj2.Properties().Select(p => p.Name))
+                    .Distinct();
+
+                foreach (var key in allKeys)
+                {
+                    var newPath = string.IsNullOrEmpty(path) ? key : $"{path}.{key}";
+                    if (!obj1.ContainsKey(key))
+                    {
+                        differences.Add((newPath, string.Empty, obj2[key]?.ToString() ?? string.Empty));
+                        differencesList.Add($"A property is missing in the first JSON at element <strong> {newPath} </strong>");
+                        continue;
+                    }
+                    if (!obj2.ContainsKey(key))
+                    {
+                        differences.Add((newPath, obj1[key]?.ToString() ?? string.Empty, string.Empty));
+                        differencesList.Add($"A property is missing in the second JSON at element <strong> {newPath} </strong>");
+                        continue;
+                    }
+                    differences.AddRange(FindDifferences(obj1[key] ?? JValue.CreateNull(), obj2[key] ?? JValue.CreateNull(), newPath));
+                }
+                break;
+
+            case JTokenType.Array:
+                var arr1 = (JArray)token1;
+                var arr2 = (JArray)token2;
+                for (int i = 0; i < Math.Max(arr1.Count, arr2.Count); i++)
+                {
+                    var newPath = $"{path}[{i}]";
+                    if (i >= arr1.Count)
+                    {
+                        differences.Add((newPath, string.Empty, arr2[i].ToString()));
+                        differencesList.Add($"A property is missing in the first JSON at element <strong> {newPath} </strong>");
+                        continue;
+                    }
+                    if (i >= arr2.Count)
+                    {
+                        differences.Add((newPath, arr1[i].ToString(), string.Empty));
+                        differencesList.Add($"A property is missing in the second JSON at element <strong> {newPath} </strong>");
+                        continue;
+                    }
+                    differences.AddRange(FindDifferences(arr1[i], arr2[i], newPath));
+                }
+                break;
+
+            default:
+                if (!JToken.DeepEquals(token1, token2))
+                {
+                    differences.Add((path, token1.ToString(), token2.ToString()));
+                    differencesList.Add($"Different value in the element <strong>{path}</strong>: <span class=\"json-start\">{token1}</span>  vs  <span class=\"json-diff\">{token2}</span>");
+                }
+                break;
+        }
+
+        return differences;
+    }
+
+    private string HighlightJson(JToken token, List<(string Path, string Value1, string Value2)> differences, bool isFirstJson)
+    {
+        var sb = new StringBuilder();
+        FormatJsonWithHighlights(token, differences, isFirstJson, sb, 0);
+        return sb.ToString();
+    }
+
+    private void FormatJsonWithHighlights(JToken token, List<(string Path, string Value1, string Value2)> differences, bool isFirstJson, StringBuilder sb, int indent, string currentPath = "")
+    {
+        string indentStr = new string(' ', indent * 2);
+
+        switch (token.Type)
+        {
+            case JTokenType.Object:
+                var obj = (JObject)token;
+                sb.AppendLine($"{indentStr}{{");
+                var properties = obj.Properties().ToList();
+                for (int i = 0; i < properties.Count; i++)
+                {
+                    var prop = properties[i];
+                    var newPath = string.IsNullOrEmpty(currentPath) ? prop.Name : $"{currentPath}.{prop.Name}";
+                    sb.Append($"{indentStr}  \"{prop.Name}\": ");
+                    FormatJsonWithHighlights(prop.Value, differences, isFirstJson, sb, indent + 1, newPath);
+                    if (i < properties.Count - 1)
+                        sb.Append(",");
+                    sb.AppendLine();
+                }
+                sb.Append($"{indentStr}}}");
+                break;
+
+            case JTokenType.Array:
+                var arr = (JArray)token;
+                sb.AppendLine($"{indentStr}[");
+                for (int i = 0; i < arr.Count; i++)
+                {
+                    var newPath = $"{currentPath}[{i}]";
+                    FormatJsonWithHighlights(arr[i], differences, isFirstJson, sb, indent + 1, newPath);
+                    if (i < arr.Count - 1)
+                        sb.Append(",");
+                    sb.AppendLine();
+                }
+                sb.Append($"{indentStr}]");
+                break;
+
+            default:
+                var valueStr = JsonConvert.SerializeObject(token);
+                var isDiff = differences.Any(d => d.Path == currentPath && (isFirstJson ? d.Value1 : d.Value2) == token.ToString());
+                if (isDiff)
+                {
+                    sb.Append($"<span class=\"{(isFirstJson ? "json-start" : "json-diff")}\">{System.Web.HttpUtility.HtmlEncode(valueStr)}</span>");
+                }
+                else
+                {
+                    sb.Append(System.Web.HttpUtility.HtmlEncode(valueStr));
+                }
+                break;
+        }
+    }
+}
